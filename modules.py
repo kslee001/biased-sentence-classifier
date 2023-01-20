@@ -26,6 +26,8 @@ class ExpClassifier(torch.nn.Module):
         self.head_mask = [None]*encoder.config.num_hidden_layers
         
         self.embeddings = encoder.embeddings
+        self.embeddings_adv = encoder.embeddings
+        self.embeddings_adv_grad = torch.zeros(0)
         self.transformer = encoder.transformer
         self.CrossEntropyLinear = torch.nn.Linear(linear_dim, 2)
         self.ContrastiveLinear = torch.nn.Sequential(
@@ -36,12 +38,12 @@ class ExpClassifier(torch.nn.Module):
         
         self.eps = 0.05
         
-    def forward(self, input_ids, attention_mask, temp_embeddings=None, device=None):        
+    def forward(self, input_ids, attention_mask, embedding_adv=False):        
         # adversarial attack
-        if temp_embeddings is not None:
+        if embedding_adv == True:
             with torch.no_grad():
-                temp_embeddings = temp_embeddings.to(device)
-                x = temp_embeddings.to(device)(input_ids)
+                self.embeddings_adv.weights = self.embeddings.word_embeddings.weight - self.embeddings_adv_grad
+                x = self.embeddings_adv(input_ids)
         else: 
             x = self.embeddings(input_ids)
             

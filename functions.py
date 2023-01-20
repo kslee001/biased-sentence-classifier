@@ -154,8 +154,10 @@ def prepare_data():
 
     general_clean_dataset = general_clean_dataset.sample(frac=1).reset_index(drop=True)[:len(general_clean_dataset)//10]
     print("--reduce the size of general clean dataset : ", len(general_clean_dataset))
-
     full_dataset = pd.concat([gender_clean_dataset, gender_dirty_dataset, general_clean_dataset, general_dirty_dataset], axis = 0).reset_index(drop=True)
+    if DATA['DATA_SIZE'] != 1.0:
+        print(f"--reduce the size of full dataset to {DATA['DATA_SIZE']}")
+        full_dataset = full_dataset.sample(frac=1).reset_index(drop=True)[:int(len(full_dataset)*DATA['DATA_SIZE'])]
     print("full dataset size : ", len(full_dataset))
     return full_dataset
 
@@ -288,10 +290,10 @@ def train_fn(model, optimizer, scheduler, warm_up, criterion, scaler,
     
 def adv_train_fn(model, optimizer, scheduler, warm_up, class_criterion, contrastive_criterion, scaler,
              dataloaders, configs, device, eps=0.05):         
-    def forward_step(encoded, y, embedding_grad):
+    def forward_step(encoded, y, embedding_adv):
         optimizer.zero_grad()
         input_ids, attention_mask = encoded['input_ids'].to(device), encoded['attention_mask'].to(device)
-        yhat, feature = model(input_ids, attention_mask, embedding_grad, device)
+        yhat, feature = model(input_ids, attention_mask, embedding_adv)
         return yhat, feature
     
     def validation():
@@ -304,7 +306,7 @@ def adv_train_fn(model, optimizer, scheduler, warm_up, class_criterion, contrast
             valid_iterator = tq(valid_loader) if configs['TQDM'] else valid_loader
             for batch in valid_iterator:
                 encoded, y = batch[0], batch[1].float().to(device)
-                yhat, feature = forward_step(encoded, y, None)
+                yhat, feature = forward_step(encoded, y, False)
                 loss = class_criterion(yhat, y)
                 yhat = yhat.detach().cpu().numpy() > 0.5
                 yhat = yhat.astype(int).tolist()
@@ -318,8 +320,7 @@ def adv_train_fn(model, optimizer, scheduler, warm_up, class_criterion, contrast
         acc = [labels[idx] == preds[idx] for idx in range(len(labels))]
         acc = sum(acc)/len(acc)
         return np.mean(val_loss), acc
-    
-    
+
     model = model.to(device)
     train_loader, valid_loader, test_loader = dataloaders
     
@@ -335,7 +336,7 @@ def adv_train_fn(model, optimizer, scheduler, warm_up, class_criterion, contrast
         train_iterator = tq(train_loader) if configs['TQDM'] else train_loader
         for batch in train_iterator:
             encoded, y = batch[0], batch[1].float().to(device)
-            yhat, feature = forward_step(encoded, y, None)
+            yhat, feature = forward_step(encoded, y, False)
             
             """
                 embedding perturbation stage
@@ -350,30 +351,25 @@ def adv_train_fn(model, optimizer, scheduler, warm_up, class_criterion, contrast
             
             # get adversarial sample
             if is_parallel():
-                temp_embeddings = torch.nn.Embedding(
-                    num_embeddings=model.module.embeddings.word_embeddings.num_embeddings,
-                    embedding_dim =model.module.embeddings.word_embeddings.embedding_dim,
-                )
-                embedding_adv = model.module.embeddings.word_embeddings.weight.detach().clone()
-                grad = model.module.embeddings.word_embeddings.weight.grad
+                grad = model.module.embeddings.word_embeddings.weight.grad.detach().cpu().clone()
+                adv_grad = torch.nn.Parameter(eps*grad).to(device)
+                # torch.cuda.device_of(adv_grad)
+                model.module.embeddings_adv_grad = adv_grad
             else:
-                temp_embeddings = torch.nn.Embedding(
-                    num_embeddings=model.embeddings.word_embeddings.num_embeddings,
-                    embedding_dim =model.embeddings.word_embeddings.embedding_dim,
-                )
-                embedding_adv = model.embeddings.word_embeddings.weight.detach().clone()
-                grad = model.embeddings.word_embeddings.weight.grad
-                
-            embedding_adv = torch.nn.Parameter(embedding_adv - eps*grad)
-            temp_embeddings.weight = embedding_adv
+                grad = model.embeddings.word_embeddings.weight.grad.detach().cpu().clone()    
+                adv_grad = torch.nn.Parameter(eps*grad).to(device)
+                # torch.cuda.device_of(adv_grad)
+                model.embeddings_adv_grad = adv_grad
 
             """
                 classification stage
             """
-            n_yhat, n_feature = forward_step(encoded, y, None)
-            a_yhat, a_feature = forward_step(encoded, y, temp_embeddings)
+            n_yhat, n_feature = forward_step(encoded, y, False)
+            a_yhat, a_feature = forward_step(encoded, y, True)
             criterion_loss1 = class_criterion(n_yhat, y)
             criterion_loss2 = class_criterion(a_yhat, y)
+            # torch.cuda.synchronize()
+            
         
             contrastive_loss = contrastive_criterion(n_feature, a_feature)
             loss = criterion_loss1*0.25 + criterion_loss2*0.25 + contrastive_loss*0.5
