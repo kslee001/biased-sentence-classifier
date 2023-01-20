@@ -287,14 +287,11 @@ def train_fn(model, optimizer, scheduler, warm_up, criterion, scaler,
 
     
 def adv_train_fn(model, optimizer, scheduler, warm_up, class_criterion, contrastive_criterion, scaler,
-             dataloaders, configs, device, eps=0.05): 
-    if device == 'cuda':
-        device = f"{device}:{torch.cuda.current_device()}"
-        
+             dataloaders, configs, device, eps=0.05):         
     def forward_step(encoded, y, embedding_grad):
         optimizer.zero_grad()
         input_ids, attention_mask = encoded['input_ids'].to(device), encoded['attention_mask'].to(device)
-        yhat, feature = model(input_ids, attention_mask, embedding_grad)
+        yhat, feature = model(input_ids, attention_mask, embedding_grad, device)
         return yhat, feature
     
     def validation():

@@ -36,12 +36,12 @@ class ExpClassifier(torch.nn.Module):
         
         self.eps = 0.05
         
-    def forward(self, input_ids, attention_mask, temp_embeddings=None):        
+    def forward(self, input_ids, attention_mask, temp_embeddings=None, device=None):        
         # adversarial attack
         if temp_embeddings is not None:
             with torch.no_grad():
-                temp_embeddings = temp_embeddings.to(f"cuda:{torch.cuda.current_device()}")
-                x = temp_embeddings.to(f"cuda:{torch.cuda.current_device()}")(input_ids)
+                temp_embeddings = temp_embeddings.to(device)
+                x = temp_embeddings.to(device)(input_ids)
         else: 
             x = self.embeddings(input_ids)
             

@@ -5,8 +5,8 @@ import loss_fn
 
 CFG = {
     'SEED' : 1203,
-    'BATCH_SIZE' : 128,
-    'EXP_BATCH_SIZE':64, 
+    'BATCH_SIZE' : 16,
+    'EXP_BATCH_SIZE':16, 
     'EPOCHS' : 10,
     'WARM_UP_EPOCHS' : 5,
     'TQDM' : True,
